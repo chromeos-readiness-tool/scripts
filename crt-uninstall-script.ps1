@@ -35,7 +35,7 @@ try {
         Write-Host "Task '$TaskNameToRun' does not exist. Skipping..."
     }
 } catch {
-    Write-Warning "An error occurred while checking for the task: $($_.Exception.Message)"
+    Write-Error "An error occurred while checking for the task: $($_.Exception.Message)"
 }
 
 # List of process names to stop
@@ -161,8 +161,7 @@ foreach ($folder in $FoldersToRemoveShare) {
         }
     } catch {
         # Handle any errors
-        Write-Host "Error removing the shared folder: $folderPath"
-        Write-Host "Error details: $($_.Exception.Message)"
+        Write-Error "Error removing the shared folder: $folderPath : $($_.Exception.Message)"
     }
 }
 
@@ -186,11 +185,29 @@ foreach ($Path in $RegistryPaths) {
         }
     } catch {
         # Error handling for each path
-        Write-Host "Error deleting registry folder at '$Path'."
-        Write-Host "Error details: $($_.Exception.Message)"
+        Write-Error "Error deleting registry folder at '$Path' : $($_.Exception.Message)"
     }
 }
 
+# Delete normal file system folders
+function Remove-Folders {
+    param (
+        [string[]]$Folders
+    )
+
+    foreach ($Folder in $Folders) {
+        try {
+            if (Test-Path -Path $Folder) {
+                Remove-Item -Path $Folder -Recurse -Force
+                Write-Host "Folder at '$Folder' was successfully deleted!"
+            } else {
+                Write-Host "Folder not found at '$Folder'. Skipping..."
+            }
+        } catch {
+            Write-Error "Error deleting folder at '$Folder' : $($_.Exception.Message)"
+        }
+    }
+}
 
 # Get the base user profile path dynamically
 $UserProfilePath = "$env:USERPROFILE"
@@ -205,20 +222,8 @@ $FileSystemPaths = @(
     "$UserProfilePath\AppData\Local\CRT"          
 )
 
-# Delete normal file system folders
-foreach ($Folder in $FileSystemPaths) {
-    try {
-        if (Test-Path -Path $Folder) {
-            Remove-Item -Path $Folder -Recurse -Force
-            Write-Host "Folder at '$Folder' was successfully deleted!"
-        } else {
-            Write-Host "Folder not found at '$Folder'. Skipping..."
-        }
-    } catch {
-        Write-Host "Error deleting folder at '$Folder'."
-        Write-Host "Error details: $($_.Exception.Message)"
-    }
-}
+# Call the function with the list of folder paths
+Remove-Folders -Folders $FileSystemPaths
 
 # Tasks to delete
 $TaskNames = @(
@@ -243,10 +248,51 @@ foreach ($TaskName in $TaskNames) {
             Write-Host "Task '$TaskName' not found. Skipping..."
         }
     } catch {
-        Write-Host "Error deleting task '$TaskName'."
-        Write-Host "Error details: $($_.Exception.Message)"
+        Write-Error "Error deleting task '$TaskName' : $($_.Exception.Message)"
     }
 }
 
+# Get the service
+$serviceName = "CrtDataService"
+$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+
+if ($service) {
+    # If service exists, try to stop it if it's running
+    if ($service.Status -eq 'Running') {
+        Write-Host "Stopping service '$serviceName'..."
+        try {
+            Stop-Service -Name $serviceName -Force
+            Start-Sleep -Seconds 5  # Give it time to stop
+        }
+        catch {
+            Write-Error "Warning: Failed to stop '$serviceName': $($_.Exception.Message)"
+        }
+    }
+
+    # Try to remove the service
+    Write-Host "Removing service '$serviceName'..."
+    try {
+        sc.exe delete $serviceName
+        Write-Host "Service '$serviceName' has been successfully removed."
+    }
+    catch {
+        Write-Error "Error removing '$serviceName': $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "Additional check: Service '$serviceName' not found."
+}
+
+# Folder paths to delete if they exist due to CrtDataService 
+$FileSystemPaths = @(
+    "C:\Program Files\ChromeOS Readiness Tool",
+    "C:\Program Files (x86)\ChromeOS Readiness Tool Hybrid",                   
+    "C:\Program Files (x86)\ChromeOS Readiness Tool"
+)
+
+# Delete normal file system folders
+Remove-Folders -Folders $FileSystemPaths
+
+Write-Host ""
+Write-Host "Uninstallation process has been completed!. Please check the output for any errors."
 Write-Host "Press Enter to exit."
 Read-Host
